@@ -4,28 +4,24 @@ import { createRoot } from 'react-dom/client';
 import { api } from './scene';
 import type { Scene, Stage } from './scene';
 import { Walkthrough } from './Walkthrough';
-import { Viewer } from './Viewer';
+import { ArrowIcon, KeyIcon, UploadIcon } from './icons';
 import './style.css';
 
 const statusText: Record<Stage, string> = {
   uploading: 'Uploading photo…',
-  stylizing: 'Making your miniature…',
-  estimating_depth: 'Preparing the interactive scene…',
-  ready: 'Scene ready',
-  still_ready: 'Still image ready',
+  stylizing: 'Generating…',
+  ready: 'Walkthrough ready',
   failed: 'Generation failed',
   needs_key: 'Key needed to resume',
 };
 
 function pending(stage?: Stage) {
-  return stage === 'uploading' || stage === 'stylizing' || stage === 'estimating_depth';
+  return stage === 'uploading' || stage === 'stylizing';
 }
 
 function App() {
-  const [tourMode, setTourMode] = useState(true);
-  const [demo, setDemo] = useState<Scene>();
   const [scene, setScene] = useState<Scene>();
-  const [liveEnabled, setLiveEnabled] = useState<boolean>();
+  const [sessionReady, setSessionReady] = useState(false);
   const [photo, setPhoto] = useState<File>();
   const [preview, setPreview] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -40,8 +36,8 @@ function App() {
 
   useEffect(() => {
     const request = new AbortController();
-    api<{ liveEnabled: boolean }>('/api/config', { signal: request.signal })
-      .then(async (config) => {
+    api('/api/config', { signal: request.signal })
+      .then(async () => {
         const saved = sessionStorage.getItem('spatium.scene');
         if (saved) {
           try {
@@ -52,15 +48,10 @@ function App() {
             setError(error instanceof Error ? error.message : 'Could not restore the scene.');
           }
         }
-        setLiveEnabled(config.liveEnabled);
+        setSessionReady(true);
       })
       .catch(() => {
         if (!request.signal.aborted) setError('The Spatium API is unavailable. Start the local server and reload.');
-      });
-    api<Scene>('/api/demo', { signal: request.signal })
-      .then(setDemo)
-      .catch(() => {
-        if (!request.signal.aborted) setError('The sample scene could not be loaded. Check the local API.');
       });
     return () => request.abort();
   }, []);
@@ -127,7 +118,7 @@ function App() {
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const key = keyField.current?.value.trim();
-    if (!key || !photo || liveEnabled === undefined || (!tourMode && !liveEnabled) || processing || submitLock.current) return;
+    if (!key || !photo || !sessionReady || processing || submitLock.current) return;
     submitLock.current = true;
     setSubmitting(true);
     setError('');
@@ -137,7 +128,7 @@ function App() {
     form.set('photo', photo);
     form.set('key', key);
     try {
-      setScene(await api<Scene>(tourMode ? '/api/walkthroughs' : '/api/scenes', { method: 'POST', body: form }));
+      setScene(await api<Scene>('/api/walkthroughs', { method: 'POST', body: form }));
       submission.current = '';
       if (keyField.current) keyField.current.value = '';
     } catch (error) {
@@ -148,20 +139,18 @@ function App() {
     }
   }
 
-  async function recover(resume = false) {
+  async function resume() {
     if (!sceneId || submitLock.current) return;
     submitLock.current = true;
     setSubmitting(true);
     setError('');
     try {
       const form = new FormData();
-      if (resume) form.set('key', keyField.current?.value.trim() || '');
-      setScene(await api<Scene>(`/api/scenes/${sceneId}/${resume ? 'resume' : 'depth'}`, {
-        method: 'POST', body: resume ? form : undefined,
-      }));
-      if (resume && keyField.current) keyField.current.value = '';
+      form.set('key', keyField.current?.value.trim() || '');
+      setScene(await api<Scene>(`/api/scenes/${sceneId}/resume`, {method: 'POST', body: form}));
+      if (keyField.current) keyField.current.value = '';
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Try preparing depth again.');
+      setError(error instanceof Error ? error.message : 'The walkthrough could not be resumed.');
     } finally {
       submitLock.current = false;
       setSubmitting(false);
@@ -170,28 +159,48 @@ function App() {
 
   const sampleTour = {count: 3, stops: ['Arrival', 'Up close', 'Beyond the landmark'].map((label, i) =>
     ({label, url: `/assets/walkthrough/stop-${i}.jpg`}))};
-  const tour = scene?.walkthrough ?? (!scene && tourMode ? sampleTour : undefined);
-  const displayed = scene?.image ? scene : scene ? undefined : demo;
-  const enabled = liveEnabled !== undefined && (tourMode || liveEnabled);
+  const tour = scene ? scene.walkthrough : sampleTour;
   const resuming = scene?.stage === 'needs_key';
   return (
     <main className="shell">
-      <header>
-        <p className="wordmark">Spatium</p>
-        <h1>Step inside<br />a photograph.</h1>
-        <p className="intro">Explore an imagined miniature from three places, then take the walkthrough with you.</p>
+      <nav className="top">
+        <span className="wordmark">Spatium</span>
+        <span className="eyebrow">Built with Magic Hour</span>
+      </nav>
+      <header className="hero">
+        <h1>Step inside a <em>photograph.</em></h1>
       </header>
 
       <div className="workspace">
-        <form className="panel form" onSubmit={scene?.stage === 'needs_key' ? (e) => { e.preventDefault(); void recover(true); } : generate}>
-          <h2>Source photo</h2>
+        <section className="result" aria-labelledby="result-title">
+          <div className="result-bar">
+            <h2 id="result-title" className="caption">{scene ? 'Your walkthrough' : 'Sample'}</h2>
+            <span className="spacer" />
+            {scene && (
+              <span className="caption" role="status">
+                {processing && <span className="pulse" />}
+                {processing ? `Preparing stop ${Math.min(3, scene.walkthrough.stops.length + 1)} of 3…` : statusText[scene.stage]}
+              </span>
+            )}
+            {scene?.credits != null && <span className="caption">{scene.credits} credits charged</span>}
+            {scene && <button type="button" className="text-button" disabled={submitting || processing}
+              onClick={() => { sessionStorage.removeItem('spatium.scene'); setScene(undefined); }}>Show sample</button>}
+          </div>
+          {tour.stops.length ? <Walkthrough key={scene?.id ?? 'demo-tour'} id={scene?.id ?? 'demo'} tour={tour} />
+            : <div className="placeholder">{processing ? 'Building your scene…' : 'Your scene will appear here.'}</div>}
+          {scene?.error && <p className="error" role="alert">{scene.error}</p>}
+        </section>
+
+        <form className="panel" onSubmit={scene?.stage === 'needs_key' ? (e) => { e.preventDefault(); void resume(); } : generate}>
           <fieldset disabled={submitting || processing}>
-            <label htmlFor="scene-format">Experience</label>
-            <select id="scene-format" value={tourMode ? 'tour' : 'still'} disabled={resuming}
-              onChange={event => { setTourMode(event.target.value === 'tour'); submission.current = ''; }}>
-              <option value="tour">360° walkthrough</option>
-              <option value="still">Depth miniature</option>
-            </select>
+            <label className="field-label" htmlFor="magic-key">Magic Hour API key</label>
+            <div className="key-input">
+              <KeyIcon />
+              <input id="magic-key" ref={keyField} type="password" autoComplete="off" required
+                maxLength={512} placeholder="mhk_live_••••••••" disabled={!sessionReady && !resuming} />
+            </div>
+            <div className="rule" />
+            <span className="field-label">Photo</span>
             <input
               ref={fileField} type="file" accept="image/jpeg,image/png,image/webp"
               className="visually-hidden" tabIndex={-1} aria-label="Source photo"
@@ -201,7 +210,7 @@ function App() {
               }}
             />
             <button
-              type="button" className={`drop ${dragging ? 'dragging' : ''}`}
+              type="button" className={`drop ${dragging ? 'dragging' : ''} ${photo && preview ? 'has-photo' : ''}`}
               onClick={() => fileField.current?.click()}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -214,47 +223,32 @@ function App() {
                 if (!submitting && !processing) selectPhoto(event.dataTransfer.files[0]);
               }}
             >
-              {photo && preview && <img src={preview} alt="" />}
-              <span>{photo ? photo.name : 'Drop a photo or browse'}</span>
-              <small>JPEG, PNG, or WebP up to 10 MB</small>
+              {photo && preview ? <>
+                <img src={preview} alt="" />
+                <span className="file-name">{photo.name}</span>
+              </> : <>
+                <span className="upload-icon"><UploadIcon /></span>
+                <strong>Drop a photo or browse</strong>
+                <small>JPEG · PNG · WEBP · 10 MB</small>
+              </>}
             </button>
-            <label htmlFor="magic-key">Magic Hour API key</label>
-            <input id="magic-key" ref={keyField} type="password" autoComplete="off" required
-              maxLength={512} placeholder="Paste your key" disabled={!enabled && !resuming} />
-            <p className="quiet">{resuming && scene.walkthrough
-              ? 'Completed stops are saved. Resuming may create the remaining paid edits.'
-              : tourMode ? 'Magic Hour receives one photo and charges for three image edits, about 100 credits each. AI imagines the unseen sides of your scene.'
-              : 'Magic Hour receives your photo and charges for one image edit, about 100 credits.'}</p>
-            <button className="generate" type="submit" disabled={!resuming && (!enabled || !photo)}>
+            <button className="generate" type="submit" disabled={!resuming && (!sessionReady || !photo)}>
               {submitting ? 'Submitting…' : processing ? 'Generating…' : resuming ? 'Resume existing edit'
-                : tourMode ? 'Generate walkthrough' : 'Generate miniature'}
+                : 'Generate walkthrough'}
+              <ArrowIcon />
             </button>
+            <p className="note">{resuming
+              ? 'Finished stops are kept. Resuming may charge for the rest.'
+              : 'Magic Hour receives your photo and charges about 300 credits.'}</p>
           </fieldset>
-          <p className="quiet">Your scene expires after 24 hours. Magic Hour handles its own copies under its terms.</p>
-          {!tourMode && liveEnabled === false && <p className="quiet">Demo mode. Install the optional depth dependencies to generate from your photo.</p>}
           {error && <p className="error" role="alert">{error}</p>}
         </form>
-
-        <section className="panel result" aria-labelledby="result-title">
-          <div className="result-heading">
-            <h2 id="result-title">{scene ? (tour ? 'Your walkthrough' : 'Your miniature') : (tour ? 'Sample walkthrough' : 'Sample scene')}</h2>
-            {scene && demo && <button type="button" disabled={submitting || processing} onClick={() => { sessionStorage.removeItem('spatium.scene'); setScene(undefined); }}>Show sample</button>}
-          </div>
-          {tour?.stops.length ? <Walkthrough key={scene?.id ?? 'demo-tour'} id={scene?.id ?? 'demo'} tour={tour} />
-            : displayed && !tour ? <Viewer key={`${displayed.id}-${Boolean(displayed.depth)}`} scene={displayed} />
-            : <div className="placeholder">{processing ? 'Waiting for your miniature…' : 'Your miniature will appear here.'}</div>}
-          {scene && (
-            <div className="job-status" role="status">
-              <span>{scene.walkthrough && processing ? `Preparing stop ${Math.min(3, scene.walkthrough.stops.length + 1)} of 3…` : statusText[scene.stage]}</span>
-              {scene.credits !== null && <span>{scene.credits} credits charged</span>}
-            </div>
-          )}
-          {scene?.error && <p className="error" role="alert">{scene.error}</p>}
-          {scene?.stage === 'still_ready' && (
-            <button disabled={submitting} type="button" onClick={() => void recover()}>Retry depth</button>
-          )}
-        </section>
       </div>
+
+      <footer className="footer">
+        <span>Scenes expire after 24 hours. Magic Hour keeps its own copies under its terms.</span>
+        <a href="https://magichour.ai" target="_blank" rel="noreferrer">Magic Hour</a>
+      </footer>
     </main>
   );
 }

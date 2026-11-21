@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Walkthrough as Tour } from './scene';
-import { canExportVideo, encodeCanvas } from './viewport';
+import { canExportVideo, encodeCanvas } from './video';
+import { DownloadIcon, ExpandIcon, ForwardIcon, PauseIcon, PlayIcon, ResetIcon, TurnIcon } from './icons';
 import { filmPose, panoramaRenderer, startPose, tourDuration } from './tour';
 
 export function Walkthrough({tour, id}: {tour: Tour; id: string}) {
@@ -210,32 +211,38 @@ export function Walkthrough({tour, id}: {tour: Tour; id: string}) {
           }
           pointers.current.set(e.pointerId, {x:e.clientX,y:e.clientY});
         }} onLostPointerCapture={e => {pointers.current.delete(e.pointerId);}}/>
-      <span className="tour-position">{stop + 1} / {tour.count} · {stops[stop]?.label}</span>
-      {document.fullscreenEnabled && <button className="tour-expand" aria-label="Toggle fullscreen" onClick={() => {
+      {!ready && <span className="overlay-note">{message || 'Opening view…'}</span>}
+      {document.fullscreenEnabled && <button className="tour-expand" aria-label="Toggle fullscreen" title="Fullscreen" onClick={() => {
         const operation = document.fullscreenElement ? document.exitFullscreen() : container.current?.requestFullscreen();
         operation?.catch(() => setMessage('Fullscreen is unavailable in this window.'));
-      }}>⛶</button>}
+      }}><ExpandIcon /></button>}
       {ready && !playing && next >= 0 && next < stops.length && Math.abs(Math.sin(bearing)) < .72 &&
         <button className="waypoint" style={{left:`${50 - Math.tan(bearing)*45}%`}} onClick={() => travel(next)}>
-          ↑ {stops[next].label}
+          <ForwardIcon /> {stops[next].label}
         </button>}
     </div>
-    <div className="tour-stops" aria-label="Walkthrough stops">{stops.map((s,i) =>
-      <button key={s.url} aria-current={i === stop ? 'step' : undefined} onClick={() => travel(i)}>{s.label}</button>)}</div>
-    <p className="quiet">{ready ? 'Drag to look around. Select a stop to walk there.' : message || 'Opening panoramic view…'}</p>
-    {ready && <div className="viewer-actions">
-      <button onClick={() => look(Math.PI)}>Turn around</button>
-      <button onClick={() => {interrupt(); pose.current = {...startPose}; draw.current();}}>Reset</button>
-      {stops.length === tour.count && <>
-        <button onClick={() => {
-          if (playing) {motion.current = null; setPlaying(false);}
-          else {motion.current = {start:performance.now()-elapsed.current, from:0,to:0,film:true}; setPlaying(true); draw.current();}
-        }}>{playing ? 'Pause walkthrough' : 'Play walkthrough'}</button>
-        <button className="download" onClick={() => void download()} disabled={saving || !canExportVideo()}>
-          {saving ? 'Encoding…' : 'Download walkthrough'}
-        </button>
-      </>}
-    </div>}
-    {ready && message && <p role="status">{message}</p>}
+    <div className="controls">
+      <div className="tour-stops" aria-label="Walkthrough stops">{stops.map((s,i) =>
+        <button key={s.url} aria-current={i === stop ? 'step' : undefined} onClick={() => travel(i)}>
+          <span>{String(i + 1).padStart(2, '0')}</span>{s.label}
+        </button>)}</div>
+      {ready && <div className="tools">
+        {saving && <span className="caption busy">Encoding…</span>}
+        <button className="icon-button" aria-label="Turn around" title="Turn around" onClick={() => look(Math.PI)}><TurnIcon /></button>
+        <button className="icon-button" aria-label="Reset" title="Reset view" onClick={() => {interrupt(); pose.current = {...startPose}; draw.current();}}><ResetIcon /></button>
+        {stops.length === tour.count && <>
+          <button className="icon-button" aria-label="Download walkthrough" title="Download WebM"
+            onClick={() => void download()} disabled={saving || !canExportVideo()}>
+            <DownloadIcon />
+          </button>
+          <span className="divider" />
+          <button className="icon-button solid" aria-label={playing ? 'Pause walkthrough' : 'Play walkthrough'} onClick={() => {
+            if (playing) {motion.current = null; setPlaying(false);}
+            else {motion.current = {start:performance.now()-elapsed.current, from:0,to:0,film:true}; setPlaying(true); draw.current();}
+          }}>{playing ? <PauseIcon /> : <PlayIcon />}</button>
+        </>}
+      </div>}
+    </div>
+    {ready && message && <p className="note" role="status">{message}</p>}
   </section>;
 }

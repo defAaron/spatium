@@ -1,26 +1,16 @@
-export type Stage = 'uploading' | 'stylizing' | 'estimating_depth' | 'ready' | 'needs_key' | 'still_ready' | 'failed';
+export type Stage = 'uploading' | 'stylizing' | 'ready' | 'needs_key' | 'failed';
 
-export interface Asset {
-  url: string;
-  width: number;
-  height: number;
-}
-
-export interface CameraParameters {
-  fov: number;
-  nearDepth: number;
-  farDepth: number;
+export interface Walkthrough {
+  count: number;
+  stops: {label: string; url: string}[];
 }
 
 export interface Scene {
-  walkthrough?: Walkthrough;
-  camera?: CameraParameters;
   id: string;
   stage: Stage;
   credits: number | null;
   error: string | null;
-  image?: Asset;
-  depth?: Asset & { version: 1 };
+  walkthrough: Walkthrough;
 }
 
 export async function api<T>(url: string, options?: RequestInit): Promise<T> {
@@ -30,9 +20,4 @@ export async function api<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error(typeof payload?.detail === 'string' ? payload.detail : 'The server could not complete the request.');
   }
   return response.json();
-}
-
-export interface Walkthrough {
-  count: number;
-  stops: {label: string; url: string}[];
 }
