@@ -6,8 +6,9 @@ Use the [implementation plan](docs/implementation-plan.md) for work order, task 
 
 ## Project structure
 
-- `src/` contains the React and TypeScript frontend. `main.tsx` handles upload and job status, `Viewer.tsx` handles camera controls, and `viewport.ts` renders the depth mesh and exports WebM. The browser's scene types live in `scene.ts`.
-- `spatium/` contains the FastAPI backend. `main.py` owns session-scoped jobs and routes, `magic_hour.py` handles provider calls, `depth.py` runs inference, and `demo.py` generates the sample image and depth buffer.
+- `src/` contains the React and TypeScript frontend. `main.tsx` handles upload and job status, `Walkthrough.tsx` handles the panorama viewer and its controls, `tour.ts` holds the shader and guided route, and `video.ts` exports WebM. The browser's scene types live in `scene.ts`.
+- `spatium/` contains the FastAPI backend. `main.py` owns session-scoped jobs and routes, `walkthrough.py` builds the three stops, `magic_hour.py` handles provider calls, and `store.py` persists scenes and assets.
+- The sample walkthrough is served from `public/assets/walkthrough/`.
 - Read [the PRD](docs/prd.md) for product scope and [the architecture](docs/architecture.md) for the processing flow. Vite writes the frontend build to `dist/`.
 
 ## Build and local development
@@ -17,7 +18,6 @@ Use Node.js 22, Python 3.11 or newer, and uv.
 - `npm ci` and `uv sync` install the locked frontend and backend dependencies.
 - Run `uv run uvicorn spatium.main:app --reload --port 8000`, then run `npm run dev` in a second terminal. Vite proxies `/api` requests to FastAPI.
 - `npm run build` checks TypeScript and bundles the frontend. Build before starting Uvicorn to serve both from port 8000.
-- `uv sync --extra depth` enables live photo generation after an API restart. The first inference downloads model weights.
 
 ## Code style
 
