@@ -19,7 +19,7 @@ For the built single-origin app, run `npm run build` before starting Uvicorn and
 ## One-photo walkthrough
 
 The default experience generates three linked 360° panoramas. Supply one still photo
-and a Magic Hour key. The worker requests up to three baseline image edits, one per stop,
+and a Magic Hour key. The worker requests up to three `gpt-image-2` image edits (about 100 credits each), one per stop,
 and sums the provider's reported credits. Previously generated views and the original
 photo guide subsequent edits. Lighting, object counts and positions can vary between stops.
 
