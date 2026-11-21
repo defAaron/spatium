@@ -40,12 +40,16 @@ async def generate(scene, key, store, decode, jpeg):
             scene.project, scene.credits = project, previous_credits + credits
             store.save(scene)
 
+        earlier = ()
         if scene.project:
             output = await magic_hour.retrieve(scene.project, key, accepted)
         else:
             if index:
                 guide = (folder / f"stop-{index-1}").read_bytes()
-                prompt = "The first image is the previous stop's spherical map; the second is the original photo. "
+                earlier = tuple((folder / f"stop-{i}").read_bytes() for i in range(index - 1))
+                prompt = ("The first image is the previous stop's spherical map; the second is the original photo"
+                          + ("; the rest are earlier stops' maps of the same place" if earlier else "")
+                          + ". Every landmark must match its appearance in those maps. ")
             else:
                 image = decode(source)
                 canvas = ImageOps.pad(image, (1536, 768), method=Image.Resampling.LANCZOS)
@@ -53,7 +57,7 @@ async def generate(scene, key, store, decode, jpeg):
                 prompt = "Use the reference for scene identity and replace the entire canvas with the environment map. "
             output = await magic_hour.stylize(guide, key, dispatch, accepted,
                                                prompt=FORMAT + prompt + DIRECTIONS[index],
-                                               references=(source,) if index else ())
+                                               references=(source, *earlier) if index else ())
         image = decode(output)
         # Map the provider's rounded output dimensions to the exact spherical texture domain.
         width = min(3072, image.width)
