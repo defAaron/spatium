@@ -13,9 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.datastructures import UploadFile
 
-from . import depth, magic_hour, walkthrough
-from .demo import HEIGHT, WIDTH, demo_assets
-from .store import CAMERA, Scene, Store
+from . import magic_hour, walkthrough
+from .store import Scene, Store
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
 MAX_UPLOAD = 10 * 1024 * 1024
@@ -94,48 +93,11 @@ def capacity():
         raise HTTPException(429, "The worker is busy. Try again shortly.")
 
 
-async def build_depth(scene, store):
-    scene.stage, scene.error = "estimating_depth", None
-    store.save(scene)
+async def build_scene(scene, key, store):
     try:
-        image = await asyncio.to_thread(decode, (store.assets / scene.id / "still").read_bytes())
-        width, height, data = await asyncio.to_thread(depth.estimate, image)
-        store.write(scene, "depth", data)
-        scene.depth, scene.stage = (width, height), "ready"
-        scene.ready_at = store.clock()
-    except Exception:
-        scene.depth_failures += 1
-        scene.stage = "still_ready"
-        scene.error = "Depth preparation failed. You can still view the miniature image."
-    store.save(scene)
-
-
-async def build_scene(scene, photo, key, store):
-    def dispatch(stage):
-        scene.stage, scene.dispatched = stage, True
-        store.save(scene)
-
-    def accepted(project, credits):
-        scene.project, scene.credits = project, credits
-        store.save(scene)
-
-    try:
-        if scene.walkthrough:
-            await walkthrough.generate(scene, key, store, decode, jpeg)
-            return
-        try:
-            if scene.project:
-                output = await magic_hour.retrieve(scene.project, key, accepted)
-            else:
-                output = await magic_hour.stylize(photo, key, dispatch, accepted)
-        finally:
-            del key, photo
-        image = await asyncio.to_thread(decode, output)
-        store.write(scene, "still", await asyncio.to_thread(jpeg, image))
-        scene.image, scene.still_at = image.size, store.clock()
-        await build_depth(scene, store)
+        await walkthrough.generate(scene, key, store, decode, jpeg)
     except Exception as exc:
-        can_resume = bool(scene.project) or (scene.walkthrough and scene.stops and not scene.dispatched)
+        can_resume = bool(scene.project) or (scene.stops and not scene.dispatched)
         scene.stage = "needs_key" if can_resume and not isinstance(exc, magic_hour.TerminalProjectError) else "failed"
         scene.error = str(exc) if isinstance(exc, magic_hour.MagicHourError) else (
             "Check your Magic Hour project history before submitting another edit."
@@ -168,40 +130,18 @@ async def health():
 
 @app.get("/api/config")
 async def config(request: Request):
-    response = JSONResponse({"liveEnabled": depth.available()}, headers={"Cache-Control": "no-store"})
+    response = JSONResponse({}, headers={"Cache-Control": "no-store"})
     token = session_id(request) or secrets.token_urlsafe(32)
     response.set_cookie(COOKIE, token + "." + sign(request, token), max_age=LIFETIME,
                             httponly=True, secure=request.url.scheme == "https", samesite="lax")
     return response
 
 
-@app.get("/api/demo")
-async def demo():
-    return {
-        "id": "demo", "camera": CAMERA, "stage": "ready", "credits": None, "error": None,
-        "image": {"url": "/api/demo/still", "width": WIDTH, "height": HEIGHT},
-        "depth": {"url": "/api/demo/depth", "width": 240, "height": 160, "version": 1},
-    }
-
-
-@app.get("/api/demo/{asset}")
-def demo_asset(asset: str):
-    if asset not in {"still", "depth"}:
-        raise HTTPException(404)
-    still, buffer = demo_assets()
-    return Response(still if asset == "still" else buffer,
-                    media_type="image/jpeg" if asset == "still" else "application/octet-stream")
-
-
 @app.post("/api/walkthroughs", status_code=202)
-@app.post("/api/scenes", status_code=202)
 async def create_scene(request: Request):
     session = session_id(request)
     if not session:
         raise HTTPException(409, "Refresh to start a browser session.")
-    is_tour = request.url.path == "/api/walkthroughs"
-    if not is_tour and not depth.available():
-        raise HTTPException(503, "Live generation requires the optional depth dependencies.")
     length = request.headers.get("content-length", "")
     if not length.isdecimal() or len(length) > 10 or int(length) > MAX_UPLOAD + 65_536:
         raise HTTPException(413, "Choose an image up to 10 MB.")
@@ -235,11 +175,9 @@ async def create_scene(request: Request):
         if store.limited(session):
             raise HTTPException(429, "Six submissions per hour are allowed. Try again later.")
         scene = Scene(secrets.token_urlsafe(16), session, submission, store.clock())
-        scene.walkthrough = is_tour
         store.insert(scene)
-        if is_tour:
-            store.write(scene, "source", photo)
-        claim(build_scene(scene, photo, key.strip(), store))
+        store.write(scene, "source", photo)
+        claim(build_scene(scene, key.strip(), store))
         return scene.view()
 
 
@@ -249,22 +187,10 @@ async def get_scene(scene_id: str, request: Request, response: Response):
     return own_scene(request, scene_id).view()
 
 
-@app.post("/api/scenes/{scene_id}/depth", status_code=202)
-async def retry_depth(scene_id: str, request: Request):
-    scene = own_scene(request, scene_id)
-    if scene.stage != "still_ready" or not scene.image:
-        raise HTTPException(409, "This scene has no failed depth step to retry.")
-    capacity()
-    scene.stage, scene.error = "estimating_depth", None
-    request.app.state.store.save(scene)
-    claim(build_depth(scene, request.app.state.store))
-    return scene.view()
-
-
 @app.post("/api/scenes/{scene_id}/resume", status_code=202)
 async def resume(scene_id: str, request: Request):
     scene = own_scene(request, scene_id)
-    if scene.stage != "needs_key" or not (scene.project or scene.walkthrough):
+    if scene.stage != "needs_key":
         raise HTTPException(409, "This project cannot be resumed.")
     if not request.headers.get("content-length", "").isdigit() or int(request.headers["content-length"]) > 4096:
         raise HTTPException(413, "Enter only your Magic Hour key.")
@@ -278,7 +204,7 @@ async def resume(scene_id: str, request: Request):
         capacity()
         scene.stage, scene.error = "stylizing", None
         request.app.state.store.save(scene)
-        claim(build_scene(scene, None, key, request.app.state.store))
+        claim(build_scene(scene, key, request.app.state.store))
         return scene.view()
 
 
@@ -291,8 +217,6 @@ async def record_event(scene_id: str, event: str, request: Request):
         scene.interactive_at = scene.interactive_at or request.app.state.store.clock()
     elif event == "export":
         scene.exports += 1
-    elif event == "render-failure":
-        scene.render_failures += 1
     else:
         raise HTTPException(404)
     request.app.state.store.save(scene)
@@ -303,12 +227,8 @@ async def record_event(scene_id: str, event: str, request: Request):
 async def get_asset(scene_id: str, asset: str, request: Request):
     scene = own_scene(request, scene_id)
     headers = {"Cache-Control": "private, no-store"}
-    if scene.walkthrough and asset in {f"stop-{i}" for i in range(len(scene.stops))}:
+    if asset in {f"stop-{i}" for i in range(len(scene.stops))}:
         return FileResponse(request.app.state.store.assets / scene.id / asset, media_type="image/jpeg", headers=headers)
-    if (asset == "still" and scene.image) or (asset == "depth" and scene.depth):
-        return FileResponse(request.app.state.store.assets / scene.id / asset,
-                            media_type="image/jpeg" if asset == "still" else "application/octet-stream",
-                            headers=headers)
     raise HTTPException(404, "Asset not found.")
 
 

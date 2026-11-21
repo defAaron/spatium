@@ -6,13 +6,6 @@ import httpx
 
 API = "https://api.magichour.ai/v1"
 MODEL = "gpt-image-2"
-PROMPT = (
-    "Restyle this exact photograph as a handcrafted tabletop miniature. Keep the "
-    "original camera angle, framing, horizon, major objects, silhouettes, and "
-    "foreground-to-background layout. Use painted clay and wood textures, fine "
-    "model-scale details, soft studio lighting, and gentle shadows. Keep foreground "
-    "and background edges legible. Avoid heavy blur, reframing, or adding objects."
-)
 
 
 class MagicHourError(Exception):
@@ -44,7 +37,7 @@ async def stylize(
     key: str,
     on_stage: Callable[[str], None],
     on_accepted: Callable[[str, int], None],
-    *, prompt: str = PROMPT, references: tuple[bytes, ...] = (),
+    *, prompt: str, references: tuple[bytes, ...] = (),
 ) -> bytes:
     auth = {"Authorization": f"Bearer {key}"}
     async with httpx.AsyncClient(timeout=20) as client:

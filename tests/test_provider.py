@@ -34,7 +34,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(next(reads), json={"status":"complete","downloads":[{"url":"https://videos.magichour.ai/out"}]})
         self.transport(handle)
         accepted = Mock()
-        self.assertEqual(await provider.stylize(b"normalized","fixture",Mock(),accepted), b"still")
+        self.assertEqual(await provider.stylize(b"normalized","fixture",Mock(),accepted,prompt="restyle"), b"still")
         accepted.assert_called_once_with("one",5)
         self.assertEqual([(e["model"], e["resolution"], e["image_count"]) for e in edits], [("gpt-image-2","1k",1)])
         self.assertEqual([(e["model"], e["resolution"], e["image_count"]) for e in edits], [(provider.MODEL,"1k",1)])
@@ -50,7 +50,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         self.transport(handle)
         marker = Mock()
         with self.assertRaisesRegex(provider.MagicHourError, "history"):
-            await provider.stylize(b"x","fixture",marker,Mock())
+            await provider.stylize(b"x","fixture",marker,Mock(),prompt="restyle")
         marker.assert_called_once_with("stylizing")
 
     async def test_auth_and_credits(self):

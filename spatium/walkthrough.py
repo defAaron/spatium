@@ -70,7 +70,7 @@ async def generate(scene, key, store, decode, jpeg):
         scene.stops.append({"label": STOPS[index], "project": scene.project,
                             "credits": (scene.credits or 0) - previous_credits})
         if index == 0:
-            scene.still_at = store.clock()
+            scene.first_stop_at = store.clock()
         scene.project, scene.dispatched = None, False
         if len(scene.stops) == len(STOPS):
             scene.stage, scene.ready_at = "ready", store.clock()
