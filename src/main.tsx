@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { api } from './scene';
 import type { Scene, Stage } from './scene';
 import { Walkthrough } from './Walkthrough';
-import { ArrowIcon, KeyIcon, UploadIcon } from './icons';
+import { ArrowIcon, KeyIcon, Spinner, UploadIcon } from './icons';
 import './style.css';
 
 const statusText: Record<Stage, string> = {
@@ -165,7 +165,6 @@ function App() {
     <main className="shell">
       <nav className="top">
         <span className="wordmark">Spatium</span>
-        <span className="eyebrow">Built with Magic Hour</span>
       </nav>
       <header className="hero">
         <h1>Step inside a <em>photograph.</em></h1>
@@ -178,7 +177,7 @@ function App() {
             <span className="spacer" />
             {scene && (
               <span className="caption" role="status">
-                {processing && <span className="pulse" />}
+                {processing && <Spinner />}
                 {processing ? `Preparing stop ${Math.min(3, scene.walkthrough.stops.length + 1)} of 3…` : statusText[scene.stage]}
               </span>
             )}
@@ -187,7 +186,9 @@ function App() {
               onClick={() => { sessionStorage.removeItem('spatium.scene'); setScene(undefined); }}>Show sample</button>}
           </div>
           {tour.stops.length ? <Walkthrough key={scene?.id ?? 'demo-tour'} id={scene?.id ?? 'demo'} tour={tour} />
-            : <div className="placeholder">{processing ? 'Building your scene…' : 'Your scene will appear here.'}</div>}
+            : <div className="placeholder">{processing
+              ? <span className="loading"><Spinner />Building your scene…</span>
+              : 'Your scene will appear here.'}</div>}
           {scene?.error && <p className="error" role="alert">{scene.error}</p>}
         </section>
 
@@ -235,11 +236,9 @@ function App() {
             <button className="generate" type="submit" disabled={!resuming && (!sessionReady || !photo)}>
               {submitting ? 'Submitting…' : processing ? 'Generating…' : resuming ? 'Resume existing edit'
                 : 'Generate walkthrough'}
-              <ArrowIcon />
+              {submitting || processing ? <Spinner /> : <ArrowIcon />}
             </button>
-            <p className="note">{resuming
-              ? 'Finished stops are kept. Resuming may charge for the rest.'
-              : 'Magic Hour receives your photo and charges about 300 credits.'}</p>
+            {resuming && <p className="note">Finished stops are kept. Resuming may charge for the rest.</p>}
           </fieldset>
           {error && <p className="error" role="alert">{error}</p>}
         </form>
@@ -247,7 +246,10 @@ function App() {
 
       <footer className="footer">
         <span>Scenes expire after 24 hours. Magic Hour keeps its own copies under its terms.</span>
-        <a href="https://magichour.ai" target="_blank" rel="noreferrer">Magic Hour</a>
+        <div className="footer-links">
+          <a href="https://magichour.ai" target="_blank" rel="noreferrer">Check out Magic Hour</a>
+          <a href="https://github.com/defAaron/spatium" target="_blank" rel="noreferrer">GitHub repo</a>
+        </div>
       </footer>
     </main>
   );

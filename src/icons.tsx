@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 
 function Icon({ children }: { children: ReactNode }) {
   return (
@@ -21,3 +21,13 @@ export const ArrowIcon = () => <Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon>;
 export const UploadIcon = () => <Icon><path d="M12 16V5M7 9.5l5-5 5 5M5 19h14" /></Icon>;
 export const KeyIcon = () => <Icon><circle cx="8" cy="15" r="4" /><path d="M11 12l8-8M16 7l2 2" /></Icon>;
 export const ForwardIcon = () => <Icon><path d="M12 19V5M6 11l6-6 6 6" /></Icon>;
+
+export function Spinner({ className, ...props }: ComponentProps<'svg'>) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      className={className ? `spinner ${className}` : 'spinner'} {...props}>
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
