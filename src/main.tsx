@@ -223,8 +223,8 @@ function App() {
               maxLength={512} placeholder="Paste your key" disabled={!enabled && !resuming} />
             <p className="quiet">{resuming && scene.walkthrough
               ? 'Completed stops are saved. Resuming may create the remaining paid edits.'
-              : tourMode ? 'Magic Hour receives one photo and charges for three image edits. AI imagines the unseen sides of your scene.'
-              : 'Magic Hour receives your photo and charges for one image edit.'}</p>
+              : tourMode ? 'Magic Hour receives one photo and charges for three image edits, about 100 credits each. AI imagines the unseen sides of your scene.'
+              : 'Magic Hour receives your photo and charges for one image edit, about 100 credits.'}</p>
             <button className="generate" type="submit" disabled={!resuming && (!enabled || !photo)}>
               {submitting ? 'Submitting…' : processing ? 'Generating…' : resuming ? 'Resume existing edit'
                 : tourMode ? 'Generate walkthrough' : 'Generate miniature'}

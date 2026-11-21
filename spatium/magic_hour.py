@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 import httpx
 
 API = "https://api.magichour.ai/v1"
-MODEL = "flux-2-klein"
+MODEL = "gpt-image-2"
 PROMPT = (
     "Restyle this exact photograph as a handcrafted tabletop miniature. Keep the "
     "original camera angle, framing, horizon, major objects, silhouettes, and "
