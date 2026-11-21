@@ -176,3 +176,12 @@ Aligned the sample's far-stop heading, requested a centered reverse viewpoint
 for future far-stop generations, and checked the revised request with mocks.
 The demo and exported route reuse the paid images. The final video is a silent
 1280 × 720 VP8 WebM, 300 frames at 30 fps over 10 seconds.
+
+**Model comparison** · 21 November 2026 · Ran one live walkthrough of the gas-station
+fixture with `gpt-image-2` at `1k`, with each later stop referencing the source photo and
+every earlier stop. Magic Hour charged 100 credits per stop, 300 in total, compared with
+15 for `flux-2-klein`. The stops agreed more closely: the same two white Texaco pumps, red
+barrel, curved sign pole, fence and white road line appear at the first two stops, and the
+far stop shows one building from behind, not the duplicate `flux-2-klein` produced. The
+1280 × 720 export decoded to 300 frames over 10 seconds and ends on the back of the same
+building. Artifacts are in `.spatium/walkthrough-gpt-image-2/`.
