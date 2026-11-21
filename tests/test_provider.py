@@ -36,7 +36,8 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         accepted = Mock()
         self.assertEqual(await provider.stylize(b"normalized","fixture",Mock(),accepted), b"still")
         accepted.assert_called_once_with("one",5)
-        self.assertEqual([(e["model"], e["resolution"], e["image_count"]) for e in edits], [("flux-2-klein","1k",1)])
+        self.assertEqual([(e["model"], e["resolution"], e["image_count"]) for e in edits], [("gpt-image-2","1k",1)])
+        self.assertEqual([(e["model"], e["resolution"], e["image_count"]) for e in edits], [(provider.MODEL,"1k",1)])
         self.assertEqual(paths.count("/v1/image-projects/one"), 3)
 
     async def test_ambiguous_creation(self):
