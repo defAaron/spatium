@@ -13,23 +13,29 @@ class StoreTests(unittest.TestCase):
             def reopen():
                 return Store(Path(directory), lambda: now)
             store = reopen()
-            for state in ("upload", "sent", "known", "still"):
+            for state in ("upload", "sent"):
                 scene = Scene(state, "owner", state, now)
                 scene.dispatched = state != "upload"
-                scene.project = "id" if state in {"known","still"} else None
                 store.insert(scene)
-                if state == "still":
-                    store.write(scene, "still", b"data")
-                    scene.image = (2, 2)
-                store.save(scene)
+            done = Scene("done", "owner", "done", now, stage="ready")
+            done.stops = [{"label": "Arrival", "project": "first", "credits": 5}]
+            store.insert(done)
+            store.write(done, "stop-0", b"data")
+            legacy = Scene("legacy", "owner", "legacy", now)
+            store.insert(legacy)
+            store.db.execute("UPDATE scenes SET metadata=? WHERE id='legacy'",
+                             ('{"id": "legacy", "session": "owner", "submission": "legacy", "created": 1000, '
+                              '"stage": "ready", "image": [2, 2], "walkthrough": false}',))
+            (store.assets / "legacy").mkdir()
+            (store.assets / "legacy" / "still").write_bytes(b"data")
             store.db.close()
             store = reopen()
             self.assertIn("before", store.get("upload").error)
             self.assertIn("history", store.get("sent").error)
-            self.assertEqual(store.get("known").stage, "needs_key")
-            self.assertEqual(store.get("still").stage, "still_ready")
+            self.assertIsNone(store.get("legacy"))
+            self.assertFalse((store.assets / "legacy").exists())
             now += 86400
-            self.assertIsNone(store.get("still"))
+            self.assertIsNone(store.get("done"))
             store.purge()
             self.assertFalse(list(store.assets.iterdir()))
             store.db.close()
@@ -38,7 +44,7 @@ class StoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory))
             for state in ("between", "polling", "uncertain"):
-                scene = Scene(state, "owner", state, store.clock(), stage="stylizing", walkthrough=True)
+                scene = Scene(state, "owner", state, store.clock(), stage="stylizing")
                 scene.stops = [{"label":"Arrival", "project":"first", "credits":5}]
                 scene.dispatched = state != "between"
                 scene.project = "second" if state == "polling" else None

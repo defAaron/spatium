@@ -1,6 +1,8 @@
 # Spatium implementation plan
 
-This is the source of truth for implementing and verifying the first release. The [PRD](prd.md) defines release scope and acceptance criteria. The [architecture](architecture.md) defines the technical contracts. The release takes one real-world photo and a user-supplied Magic Hour key, generates one miniature still, opens an interactive 2.5D scene, and exports that scene's preset camera move as a six-second WebM.
+This is the source of truth for implementing and verifying the first release. The [PRD](prd.md) defines release scope and acceptance criteria. The [architecture](architecture.md) defines the technical contracts. The release takes one real-world photo and a user-supplied Magic Hour key, generates three connected miniature panoramas, opens them as an interactive walkthrough, and exports the guided route as a ten-second WebM.
+
+Sections 5 to 7 describe the depth miniature, which was removed on 21 November 2026 (see section 11). They remain as a record and need no further work.
 
 ## How to execute this plan
 
@@ -121,8 +123,8 @@ The scaffold already has a demo, upload form, Magic Hour adapter, depth implemen
 **Start in** · [PRD validation](prd.md#validation) and [Magic Hour model choice](architecture.md#magic-hour-tool-choice).
 
 - [x] Prepare 12 approved photos covering rooms, streets, landscapes, and foreground challenges such as fences and foliage. Keep private fixture files out of Git and use stable IDs in evidence.
-- [ ] Verify one live upload-to-export flow with the baseline model. Evaluate the full fixture set, record time to still and interaction, credits per accepted result, and export outcomes. Compare candidate edit models on representative fixtures within the authorized budget.
-- [ ] Have two reviewers score recognizability, parallax, and visual artifacts. Use their results and the observed timings to set latency targets and tune the model, prompt, or camera range.
+- [ ] Verify one live upload-to-export walkthrough with the default model. Evaluate the full fixture set, record time to the first stop, to ready and to interaction, credits per accepted result, and export outcomes.
+- [ ] Have two reviewers score recognizability and landmark consistency across stops. Use their results and the observed timings to set latency targets and tune the model or prompts.
 
 **Test gate** · Run the release smoke against the intended environment with authorized live access. Recheck any changed defaults through the earlier gates they affect. Verify the PRD acceptance criteria and record the scorecard against the provisional threshold of 10 of 12 photos. Include at least one real six-second export and confirm the requested photo, provider charges, and result agree.
 
@@ -185,3 +187,14 @@ barrel, curved sign pole, fence and white road line appear at the first two stop
 far stop shows one building from behind, not the duplicate `flux-2-klein` produced. The
 1280 × 720 export decoded to 300 frames over 10 seconds and ends on the back of the same
 building. Artifacts are in `.spatium/walkthrough-gpt-image-2/`.
+
+**Sample and interface refresh** · 21 November 2026 · Replaced the sample walkthrough with the
+three `gpt-image-2` stops from the model comparison (1440 × 720), so no new credits were spent.
+Restyled the interface after a light editorial layout: one control panel, icon
+controls beside the stop tabs, and shorter copy. A CSS spinner during
+export stalled WebM encoding in headless SwiftShader Chromium, so the busy state is a static
+label. `npm run build`, the backend suite and `npm run test:e2e` passed.
+
+## 11. Remove the depth miniature
+
+**Completion record** · 21 November 2026 · Removed the depth miniature so the walkthrough is the only experience. Deleted `Viewer.tsx`, the depth mesh code (the WebM encoder moved to `src/video.ts`), `spatium/depth.py`, `spatium/demo.py`, `POST /api/scenes`, the depth retry route, the demo routes, the optional `depth` dependencies and their tests. Scene records drop the still, depth and failure fields, and the store deletes legacy miniature rows on startup. `/api/config` now only issues the session cookie. The metrics report shows `first_stop_seconds` in place of `still_seconds`. The PRD, architecture, README and AGENTS.md describe the walkthrough only. `npm run build`, `uv run python -m unittest discover -s tests` (9 tests) and `npm run test:e2e` passed.

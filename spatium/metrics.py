@@ -13,8 +13,8 @@ def report(directory):
         for raw, in connection.execute("SELECT metadata FROM scenes ORDER BY created"):
             record = json.loads(raw)
             row = {name: record.get(name) for name in (
-                "id", "stage", "credits", "exports", "depth_failures", "render_failures")}
-            for stage in ("still", "ready", "interactive"):
+                "id", "stage", "credits", "exports")}
+            for stage in ("first_stop", "ready", "interactive"):
                 at = record.get(stage + "_at")
                 row[stage + "_seconds"] = round(at - record["created"], 2) if at else None
             scenes.append(row)

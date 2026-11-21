@@ -4,11 +4,8 @@ import os
 import shutil
 import sqlite3
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-
-
-CAMERA = {"fov": 42, "nearDepth": 2.65, "farDepth": 3.85}
 
 
 @dataclass
@@ -21,33 +18,29 @@ class Scene:
     dispatched: bool = False
     project: str | None = None
     credits: int | None = None
-    image: tuple[int, int] | None = None
-    depth: tuple[int, int] | None = None
     error: str | None = None
-    still_at: float | None = None
+    first_stop_at: float | None = None
     ready_at: float | None = None
     interactive_at: float | None = None
-    depth_failures: int = 0
     exports: int = 0
-    render_failures: int = 0
-
-    walkthrough: bool = False
     stops: list[dict] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, raw: str):
+        record = json.loads(raw)
+        # Rows written before the depth miniature was removed. Drop them on load.
+        if record.get("walkthrough") is False:
+            return None
+        names = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in record.items() if key in names})
 
     def view(self):
         result = {key: getattr(self, key) for key in ("id", "stage", "credits", "error")}
-        for name, dimensions, asset in (("image", self.image, "still"), ("depth", self.depth, "depth")):
-            if dimensions:
-                result[name] = {"url": f"/api/scenes/{self.id}/{asset}", "width": dimensions[0], "height": dimensions[1]}
-        if self.depth:
-            result["depth"]["version"] = 1
-            result["camera"] = CAMERA
-        if self.walkthrough:
-            result["walkthrough"] = {
-                "count": 3,
-                "stops": [{"url": f"/api/scenes/{self.id}/stop-{index}", "label": stop["label"]}
-                          for index, stop in enumerate(self.stops)],
-            }
+        result["walkthrough"] = {
+            "count": 3,
+            "stops": [{"url": f"/api/scenes/{self.id}/stop-{index}", "label": stop["label"]}
+                      for index, stop in enumerate(self.stops)],
+        }
         return result
 
 
@@ -61,6 +54,9 @@ class Store:
             UNIQUE(session, submission))""")
         self.assets = directory / "assets"
         self.assets.mkdir(exist_ok=True)
+        for scene_id, raw in self.db.execute("SELECT id, metadata FROM scenes").fetchall():
+            if Scene.load(raw) is None:
+                self.db.execute("DELETE FROM scenes WHERE id=?", (scene_id,))
         self.purge()
         for folder in self.assets.iterdir():
             scene = self.get(folder.name)
@@ -68,23 +64,14 @@ class Store:
                 shutil.rmtree(folder)
             else:
                 for asset in folder.iterdir():
-                    valid = {"still"} if scene.image else set()
-                    if scene.depth:
-                        valid.add("depth")
-                    if scene.walkthrough:
-                        valid.add("source")
-                        valid.update(f"stop-{i}" for i in range(len(scene.stops)))
+                    valid = {"source", *(f"stop-{i}" for i in range(len(scene.stops)))}
                     if asset.name not in valid:
                         asset.unlink()
         for row, in self.db.execute("SELECT metadata FROM scenes").fetchall():
-            scene = Scene(**json.loads(row))
-            if scene.stage in {"uploading", "stylizing", "estimating_depth"}:
-                if scene.walkthrough and (scene.project or not scene.dispatched) and (self.assets / scene.id / "source").exists():
+            scene = Scene.load(row)
+            if scene.stage in {"uploading", "stylizing"}:
+                if (scene.project or not scene.dispatched) and (self.assets / scene.id / "source").exists():
                     scene.stage, scene.error = "needs_key", "Enter your key to finish the remaining walkthrough stops."
-                elif scene.image and not scene.walkthrough:
-                    scene.stage, scene.error = "still_ready", "Depth processing was interrupted. Retry depth."
-                elif scene.project:
-                    scene.stage, scene.error = "needs_key", "Enter your key to retrieve the existing edit."
                 elif scene.dispatched:
                     scene.stage, scene.error = "failed", "The edit may have been accepted. Check your Magic Hour project history."
                 else:
@@ -100,7 +87,7 @@ class Store:
 
     def get(self, scene_id):
         row = self.db.execute("SELECT metadata FROM scenes WHERE id=? AND created>?", (scene_id,self.clock()-86400)).fetchone()
-        return Scene(**json.loads(row[0])) if row else None
+        return Scene.load(row[0]) if row else None
 
     def existing(self, session, submission):
         row = self.db.execute("SELECT id FROM scenes WHERE session=? AND submission=?", (session, submission)).fetchone()
