@@ -53,9 +53,33 @@ Cleanup runs at startup and once per minute. Before expiry, run
 and successful browser encodes. Interactive time includes
 polling and browser load time. The report contains opaque IDs and measurements.
 
+## Free hosted deployment
+
+The free configuration keeps one browser origin while splitting the services:
+
+- **Vercel** builds the frontend (`vercel.json`) and rewrites `/api/*` to the backend, so the
+  session cookie and stop images stay same-origin.
+- **Render** runs one free web service (`render.yaml`). Its disk is temporary, so nothing
+  durable is stored there.
+- **Supabase Postgres** holds scene metadata. Set `SPATIUM_DATABASE_URL` to the Supavisor
+  session-pooler connection string, because Render cannot reach Supabase's IPv6-only direct host.
+- **Cloudflare R2** holds the source photo and stops. Create a private bucket and an API token
+  with object read and write access to it, then set `SPATIUM_R2_ACCOUNT_ID`,
+  `SPATIUM_R2_ACCESS_KEY_ID`, `SPATIUM_R2_SECRET_ACCESS_KEY` and `SPATIUM_R2_BUCKET`.
+  Add a lifecycle rule that deletes objects after one day as a backstop for the 24-hour expiry.
+- `SPATIUM_SESSION_SECRET` (at least 32 characters) signs session cookies. Render generates it.
+  Changing it signs every browser out.
+
+Deploy the Render blueprint first, then update the rewrite destination in `vercel.json` if
+Render assigns a different hostname than `spatium-api.onrender.com`. A free Render service
+sleeps after about 15 idle minutes, so the first request afterwards waits for a cold start, and
+a job running when the service stops resumes with key re-entry. Without these variables,
+Spatium uses SQLite and local files in `SPATIUM_DATA_DIR` as before.
+
 ## Verification
 
 Run `uv run python -m unittest discover -s tests` for API integration checks.
+Set `SPATIUM_TEST_DATABASE_URL` to a disposable Postgres database to run the store checks against Postgres.
 Install FFmpeg (including ffprobe) and install Chromium with `npx playwright install chromium`, then run `npm run build` and
 `npm run test:e2e`. The runner starts and stops Uvicorn and Vite on loopback ports
 18767 and 18768 and gives the backend a temporary data directory.
