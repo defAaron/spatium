@@ -14,7 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.datastructures import UploadFile
 
 from . import magic_hour, walkthrough
-from .store import Scene, Store
+from .store import R2Blobs, Scene, Store
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
 MAX_UPLOAD = 10 * 1024 * 1024
@@ -44,7 +44,8 @@ async def lifespan(app: FastAPI):
             with secret.open("xb") as file:
                 file.write(secrets.token_bytes(32))
         app.state.secret = secret.read_bytes()
-    app.state.store = Store(directory)
+    blobs = R2Blobs.from_env(os.environ) if os.environ.get("SPATIUM_R2_BUCKET") else None
+    app.state.store = Store(directory, database=os.environ.get("SPATIUM_DATABASE_URL"), blobs=blobs)
     app.state.tasks = set()
     cleanup = asyncio.create_task(expire(app.state.store))
     try:
@@ -234,7 +235,8 @@ async def get_asset(scene_id: str, asset: str, request: Request):
     scene = own_scene(request, scene_id)
     headers = {"Cache-Control": "private, no-store"}
     if asset in {f"stop-{i}" for i in range(len(scene.stops))}:
-        return FileResponse(request.app.state.store.assets / scene.id / asset, media_type="image/jpeg", headers=headers)
+        data = await asyncio.to_thread(request.app.state.store.read, scene, asset)
+        return Response(data, media_type="image/jpeg", headers=headers)
     raise HTTPException(404, "Asset not found.")
 
 

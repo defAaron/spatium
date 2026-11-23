@@ -1,4 +1,8 @@
-"""Persistent scene metadata and private, atomically published assets (one server process)."""
+"""Persistent scene metadata and private, atomically published assets (one server process).
+
+Development uses SQLite and a local asset directory. A deployment can point metadata at
+Postgres (SPATIUM_DATABASE_URL) and assets at a Cloudflare R2 bucket (SPATIUM_R2_*).
+"""
 import json
 import os
 import shutil
@@ -44,33 +48,139 @@ class Scene:
         return result
 
 
+class Database:
+    """An autocommit connection to SQLite (a path) or Postgres (a URL). Statements use ? placeholders."""
+
+    def __init__(self, target):
+        self.url = target if isinstance(target, str) else None
+        if self.url:
+            self.connect()
+        else:
+            self.connection = sqlite3.connect(target, isolation_level=None)
+
+    def connect(self):
+        import psycopg
+        # Prepared statements are disabled so the Supabase pooler can be used in either mode.
+        self.connection = psycopg.connect(self.url, autocommit=True, prepare_threshold=None)
+
+    def execute(self, sql, params=()):
+        if not self.url:
+            return self.connection.execute(sql, params)
+        import psycopg
+        sql = sql.replace("?", "%s")
+        try:
+            return self.connection.execute(sql, params)
+        except psycopg.OperationalError:
+            # Hosted poolers drop idle connections. Reconnect once when the connection is gone.
+            if not (self.connection.closed or self.connection.broken):
+                raise
+            self.connect()
+            return self.connection.execute(sql, params)
+
+    def close(self):
+        self.connection.close()
+
+
+class LocalBlobs:
+    """Assets as files in one folder per scene, published by atomic rename."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        root.mkdir(exist_ok=True)
+
+    def inventory(self):
+        return {folder.name: {asset.name for asset in folder.iterdir()} for folder in self.root.iterdir()}
+
+    def read(self, scene_id, asset):
+        return (self.root / scene_id / asset).read_bytes()
+
+    def write(self, scene_id, asset, data):
+        directory = self.root / scene_id
+        directory.mkdir(exist_ok=True)
+        partial = directory / (asset + ".partial")
+        with partial.open("wb") as file:
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        partial.replace(directory / asset)
+
+    def remove(self, scene_id, asset=None):
+        if asset is None:
+            shutil.rmtree(self.root / scene_id, ignore_errors=True)
+        else:
+            (self.root / scene_id / asset).unlink(missing_ok=True)
+
+
+class R2Blobs:
+    """Assets as private objects keyed `<scene>/<asset>` in an S3-compatible bucket."""
+
+    def __init__(self, bucket, client):
+        self.bucket = bucket
+        self.client = client
+
+    @classmethod
+    def from_env(cls, env):
+        import boto3
+        client = boto3.client(
+            "s3", region_name="auto",
+            endpoint_url=f"https://{env['SPATIUM_R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+            aws_access_key_id=env["SPATIUM_R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=env["SPATIUM_R2_SECRET_ACCESS_KEY"])
+        return cls(env["SPATIUM_R2_BUCKET"], client)
+
+    def keys(self, prefix=""):
+        for page in self.client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                yield item["Key"]
+
+    def inventory(self):
+        found = {}
+        for key in self.keys():
+            scene_id, _, asset = key.partition("/")
+            found.setdefault(scene_id, set()).add(asset)
+        return found
+
+    def read(self, scene_id, asset):
+        return self.client.get_object(Bucket=self.bucket, Key=f"{scene_id}/{asset}")["Body"].read()
+
+    def write(self, scene_id, asset, data):
+        # A single PUT is atomic: readers see the previous object or the complete new one.
+        self.client.put_object(Bucket=self.bucket, Key=f"{scene_id}/{asset}", Body=data,
+                               ContentType="image/jpeg")
+
+    def remove(self, scene_id, asset=None):
+        keys = list(self.keys(scene_id + "/")) if asset is None else [f"{scene_id}/{asset}"]
+        for key in keys:
+            self.client.delete_object(Bucket=self.bucket, Key=key)
+
+
 class Store:
-    def __init__(self, directory: Path, clock=time.time):
+    def __init__(self, directory: Path, clock=time.time, database: str | None = None, blobs=None):
         self.directory = directory
         self.clock = clock
-        self.db = sqlite3.connect(directory / "scenes.sqlite3", isolation_level=None)
+        self.db = Database(database or directory / "scenes.sqlite3")
         self.db.execute("""CREATE TABLE IF NOT EXISTS scenes (
-            id TEXT PRIMARY KEY, session TEXT, submission TEXT, created REAL, metadata TEXT,
+            id TEXT PRIMARY KEY, session TEXT, submission TEXT, created DOUBLE PRECISION, metadata TEXT,
             UNIQUE(session, submission))""")
-        self.assets = directory / "assets"
-        self.assets.mkdir(exist_ok=True)
+        self.blobs = blobs or LocalBlobs(directory / "assets")
         for scene_id, raw in self.db.execute("SELECT id, metadata FROM scenes").fetchall():
             if Scene.load(raw) is None:
                 self.db.execute("DELETE FROM scenes WHERE id=?", (scene_id,))
         self.purge()
-        for folder in self.assets.iterdir():
-            scene = self.get(folder.name)
+        inventory = self.blobs.inventory()
+        for scene_id, assets in inventory.items():
+            scene = self.get(scene_id)
             if scene is None:
-                shutil.rmtree(folder)
-            else:
-                for asset in folder.iterdir():
-                    valid = {"source", *(f"stop-{i}" for i in range(len(scene.stops)))}
-                    if asset.name not in valid:
-                        asset.unlink()
+                self.blobs.remove(scene_id)
+                continue
+            valid = {"source", *(f"stop-{i}" for i in range(len(scene.stops)))}
+            for asset in assets - valid:
+                self.blobs.remove(scene_id, asset)
+            inventory[scene_id] = assets & valid
         for row, in self.db.execute("SELECT metadata FROM scenes").fetchall():
             scene = Scene.load(row)
             if scene.stage in {"uploading", "stylizing"}:
-                if (scene.project or not scene.dispatched) and (self.assets / scene.id / "source").exists():
+                if (scene.project or not scene.dispatched) and "source" in inventory.get(scene.id, ()):
                     scene.stage, scene.error = "needs_key", "Enter your key to finish the remaining walkthrough stops."
                 elif scene.dispatched:
                     scene.stage, scene.error = "failed", "The edit may have been accepted. Check your Magic Hour project history."
@@ -78,12 +188,15 @@ class Store:
                     scene.stage, scene.error = "failed", "Upload interrupted before the edit. Submit your photo again."
                 self.save(scene)
 
+    @property
+    def assets(self) -> Path:
+        """The local asset directory (development storage only)."""
+        return self.blobs.root
+
     def purge(self):
         for scene_id, in self.db.execute("SELECT id FROM scenes WHERE created <= ?", (self.clock()-86400,)).fetchall():
             self.db.execute("DELETE FROM scenes WHERE id=?", (scene_id,))
-            folder = self.assets / scene_id
-            if folder.exists():
-                shutil.rmtree(folder)
+            self.blobs.remove(scene_id)
 
     def get(self, scene_id):
         row = self.db.execute("SELECT metadata FROM scenes WHERE id=? AND created>?", (scene_id,self.clock()-86400)).fetchone()
@@ -102,14 +215,13 @@ class Store:
     def limited(self, session):
         return self.db.execute("SELECT count(*) FROM scenes WHERE session=? AND created>?", (session, self.clock()-3600)).fetchone()[0] >= 6
 
+    def read(self, scene, asset):
+        return self.blobs.read(scene.id, asset)
+
     def write(self, scene, asset, data):
         if not self.get(scene.id):
             raise ValueError("Scene expired")
-        directory = self.assets / scene.id
-        directory.mkdir(exist_ok=True)
-        partial = directory / (asset + ".partial")
-        with partial.open("wb") as file:
-            file.write(data)
-            file.flush()
-            os.fsync(file.fileno())
-        partial.replace(directory / asset)
+        self.blobs.write(scene.id, asset, data)
+
+    def remove(self, scene, asset):
+        self.blobs.remove(scene.id, asset)

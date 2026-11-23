@@ -26,8 +26,7 @@ FORMAT = (
 
 
 async def generate(scene, key, store, decode, jpeg):
-    folder = store.assets / scene.id
-    source = (folder / "source").read_bytes()
+    source = store.read(scene, "source")
     while len(scene.stops) < len(STOPS):
         index = len(scene.stops)
         previous_credits = sum(stop["credits"] for stop in scene.stops)
@@ -45,8 +44,8 @@ async def generate(scene, key, store, decode, jpeg):
             output = await magic_hour.retrieve(scene.project, key, accepted)
         else:
             if index:
-                guide = (folder / f"stop-{index-1}").read_bytes()
-                earlier = tuple((folder / f"stop-{i}").read_bytes() for i in range(index - 1))
+                guide = store.read(scene, f"stop-{index-1}")
+                earlier = tuple(store.read(scene, f"stop-{i}") for i in range(index - 1))
                 prompt = ("The first image is the previous stop's spherical map; the second is the original photo"
                           + ("; the rest are earlier stops' maps of the same place" if earlier else "")
                           + ". Every landmark must match its appearance in those maps. ")
@@ -75,4 +74,4 @@ async def generate(scene, key, store, decode, jpeg):
         if len(scene.stops) == len(STOPS):
             scene.stage, scene.ready_at = "ready", store.clock()
         store.save(scene)
-    (folder / "source").unlink(missing_ok=True)
+    store.remove(scene, "source")
