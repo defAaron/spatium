@@ -1,0 +1,9 @@
+node_modules
+.venv
+.uv-cache
+dist
+.spatium
+__pycache__
+*.py[cod]
+.env
+.env.*
