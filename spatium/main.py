@@ -33,11 +33,17 @@ async def expire(store):
 async def lifespan(app: FastAPI):
     directory = Path(os.environ.get("SPATIUM_DATA_DIR", ".spatium"))
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    secret = directory / "session-secret"
-    if not secret.exists():
-        with secret.open("xb") as file:
-            file.write(secrets.token_bytes(32))
-    app.state.secret = secret.read_bytes()
+    configured = os.environ.get("SPATIUM_SESSION_SECRET")
+    if configured:
+        if len(configured) < 32:
+            raise RuntimeError("SPATIUM_SESSION_SECRET must be at least 32 characters.")
+        app.state.secret = configured.encode()
+    else:
+        secret = directory / "session-secret"
+        if not secret.exists():
+            with secret.open("xb") as file:
+                file.write(secrets.token_bytes(32))
+        app.state.secret = secret.read_bytes()
     app.state.store = Store(directory)
     app.state.tasks = set()
     cleanup = asyncio.create_task(expire(app.state.store))

@@ -30,6 +30,19 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config.json(), {})
         self.assertIn("spatium_session", config.headers["set-cookie"])
 
+    async def test_session_secret_from_environment(self):
+        cookie = (await self.client.get("/api/config")).cookies["spatium_session"]
+        with patch.dict(os.environ, SPATIUM_SESSION_SECRET="s" * 32):
+            async with app.router.lifespan_context(app):
+                self.assertEqual(app.state.secret, b"s" * 32)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test",
+                                             cookies={"spatium_session": cookie}) as other:
+                    rotated = (await other.get("/api/config")).cookies["spatium_session"]
+                    self.assertNotEqual(rotated, cookie)
+        with patch.dict(os.environ, SPATIUM_SESSION_SECRET="short"), self.assertRaises(RuntimeError):
+            async with app.router.lifespan_context(app):
+                pass
+
     async def submit(self, data, submission="one"):
         return await self.client.post("/api/walkthroughs", data={"key": "fixture", "submission": submission},
                                       files={"photo": ("source", data)})
