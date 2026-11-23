@@ -14,7 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.datastructures import UploadFile
 
 from . import magic_hour, walkthrough
-from .store import R2Blobs, Scene, Store
+from .store import BucketBusy, R2Blobs, Scene, Store
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
 MAX_UPLOAD = 10 * 1024 * 1024
@@ -239,7 +239,10 @@ async def get_asset(scene_id: str, asset: str, request: Request):
     scene = own_scene(request, scene_id)
     headers = {"Cache-Control": "private, no-store"}
     if asset in {f"stop-{i}" for i in range(len(scene.stops))}:
-        data = await asyncio.to_thread(request.app.state.store.read, scene, asset)
+        try:
+            data = await asyncio.to_thread(request.app.state.store.read, scene, asset)
+        except BucketBusy:
+            raise HTTPException(503, "Spatium is busy. Try again shortly.", headers={"Retry-After": "5"})
         return Response(data, media_type="image/jpeg", headers=headers)
     raise HTTPException(404, "Asset not found.")
 

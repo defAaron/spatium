@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from spatium.store import Database, R2Blobs, Store, Scene
+from spatium.store import BucketBusy, Database, R2Blobs, Store, Scene
 
 # Set to a disposable Postgres URL to run these checks against Postgres instead of SQLite.
 DATABASE = os.environ.get("SPATIUM_TEST_DATABASE_URL")
@@ -20,6 +20,7 @@ class FakeBucket:
 
     def __init__(self):
         self.objects = {}
+        self.reads = 0
 
     def get_paginator(self, name):
         bucket = self
@@ -30,6 +31,7 @@ class FakeBucket:
         return Paginator()
 
     def get_object(self, Bucket, Key):
+        self.reads += 1
         return {"Body": BytesIO(self.objects[Key])}
 
     def put_object(self, Bucket, Key, Body, ContentType):
@@ -127,3 +129,24 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(bucket.objects, {})
             finally:
                 store.db.close()
+
+    def test_bucket_reads_are_cached_and_budgeted(self):
+        bucket = FakeBucket()
+        now = [0.0]
+        blobs = R2Blobs("spatium", bucket, cache_bytes=10, reads_per_second=1, read_burst=2, clock=lambda: now[0])
+        blobs.write("scene", "stop-0", b"12345")
+        for _ in range(100):
+            self.assertEqual(blobs.read("scene", "stop-0"), b"12345")
+        self.assertEqual(bucket.reads, 0)
+        for name in ("a", "b", "c"):
+            bucket.objects[f"scene/{name}"] = b"123456"
+        blobs.read("scene", "a")
+        blobs.read("scene", "b")
+        self.assertLessEqual(blobs.cached, 10)
+        with self.assertRaises(BucketBusy):
+            blobs.read("scene", "c")
+        now[0] += 1
+        self.assertEqual(blobs.read("scene", "c"), b"123456")
+        self.assertEqual(bucket.reads, 3)
+        blobs.remove("scene")
+        self.assertEqual((bucket.objects, blobs.cached), ({}, 0))

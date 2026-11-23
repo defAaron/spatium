@@ -8,6 +8,7 @@ import os
 import shutil
 import sqlite3
 import time
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -111,21 +112,41 @@ class LocalBlobs:
             (self.root / scene_id / asset).unlink(missing_ok=True)
 
 
-class R2Blobs:
-    """Assets as private objects keyed `<scene>/<asset>` in an S3-compatible bucket."""
+class BucketBusy(Exception):
+    """Raised when a bucket read would exceed the read budget."""
 
-    def __init__(self, bucket, client):
+
+class R2Blobs:
+    """Assets as private objects keyed `<scene>/<asset>` in an S3-compatible bucket.
+
+    Assets never change after they are written, so reads are served from a bounded in-memory
+    cache. Reads that miss the cache spend from a token bucket, so the bucket never sees more
+    than `reads_per_second` reads on average, however often clients request assets.
+    """
+
+    def __init__(self, bucket, client, cache_bytes=48 * 1024 * 1024, reads_per_second=2.0,
+                 read_burst=20, clock=time.monotonic):
         self.bucket = bucket
         self.client = client
+        self.cache = OrderedDict()
+        self.cache_bytes = cache_bytes
+        self.cached = 0
+        self.rate = reads_per_second
+        self.burst = read_burst
+        self.tokens = float(read_burst)
+        self.clock = clock
+        self.refilled = clock()
 
     @classmethod
     def from_env(cls, env):
         import boto3
+        from botocore.config import Config
         client = boto3.client(
             "s3", region_name="auto",
             endpoint_url=f"https://{env['SPATIUM_R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
             aws_access_key_id=env["SPATIUM_R2_ACCESS_KEY_ID"],
-            aws_secret_access_key=env["SPATIUM_R2_SECRET_ACCESS_KEY"])
+            aws_secret_access_key=env["SPATIUM_R2_SECRET_ACCESS_KEY"],
+            config=Config(connect_timeout=5, read_timeout=20, retries={"max_attempts": 3, "mode": "standard"}))
         return cls(env["SPATIUM_R2_BUCKET"], client)
 
     def keys(self, prefix=""):
@@ -140,17 +161,48 @@ class R2Blobs:
             found.setdefault(scene_id, set()).add(asset)
         return found
 
+    def remember(self, key, data):
+        if key in self.cache:
+            self.cached -= len(self.cache.pop(key))
+        if len(data) > self.cache_bytes:
+            return
+        self.cache[key] = data
+        self.cached += len(data)
+        while self.cached > self.cache_bytes:
+            self.cached -= len(self.cache.popitem(last=False)[1])
+
+    def forget(self, key):
+        if key in self.cache:
+            self.cached -= len(self.cache.pop(key))
+
+    def spend(self):
+        now = self.clock()
+        self.tokens = min(self.burst, self.tokens + (now - self.refilled) * self.rate)
+        self.refilled = now
+        if self.tokens < 1:
+            raise BucketBusy()
+        self.tokens -= 1
+
     def read(self, scene_id, asset):
-        return self.client.get_object(Bucket=self.bucket, Key=f"{scene_id}/{asset}")["Body"].read()
+        key = f"{scene_id}/{asset}"
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        self.spend()
+        data = self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        self.remember(key, data)
+        return data
 
     def write(self, scene_id, asset, data):
         # A single PUT is atomic: readers see the previous object or the complete new one.
-        self.client.put_object(Bucket=self.bucket, Key=f"{scene_id}/{asset}", Body=data,
-                               ContentType="image/jpeg")
+        key = f"{scene_id}/{asset}"
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType="image/jpeg")
+        self.remember(key, data)
 
     def remove(self, scene_id, asset=None):
         keys = list(self.keys(scene_id + "/")) if asset is None else [f"{scene_id}/{asset}"]
         for key in keys:
+            self.forget(key)
             self.client.delete_object(Bucket=self.bucket, Key=key)
 
 
