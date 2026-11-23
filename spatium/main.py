@@ -21,6 +21,8 @@ MAX_UPLOAD = 10 * 1024 * 1024
 PIXEL_LIMIT = 24_000_000
 LIFETIME = 24 * 60 * 60
 COOKIE = "spatium_session"
+# Optional cap on new scenes per 24 hours across all sessions, which bounds storage writes.
+DAILY_SCENES = int(os.environ.get("SPATIUM_DAILY_SCENES", "0")) or None
 
 
 async def expire(store):
@@ -181,6 +183,8 @@ async def create_scene(request: Request):
         capacity()
         if store.limited(session):
             raise HTTPException(429, "Six submissions per hour are allowed. Try again later.")
+        if DAILY_SCENES and store.recent() >= DAILY_SCENES:
+            raise HTTPException(429, "Spatium has reached today's walkthrough limit. Try again tomorrow.")
         scene = Scene(secrets.token_urlsafe(16), session, submission, store.clock())
         store.insert(scene)
         store.write(scene, "source", photo)

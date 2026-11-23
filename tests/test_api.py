@@ -97,6 +97,17 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.submit(source, "two")).status_code, 429)
         provider.assert_awaited_once()
 
+    async def test_daily_scene_cap(self):
+        from spatium.store import Scene
+        store = app.state.store
+        for index in range(2):
+            store.insert(Scene(f"other-{index}", f"session-{index}", "one", store.clock(), stage="failed"))
+        await self.client.get("/api/config")
+        with patch("spatium.main.DAILY_SCENES", 2):
+            response = await self.submit(jpeg_fixture())
+        self.assertEqual(response.status_code, 429)
+        self.assertIn("today", response.json()["detail"])
+
     async def test_walkthrough_recovery_and_ownership(self):
         import asyncio
         from spatium import magic_hour

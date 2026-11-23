@@ -69,6 +69,9 @@ The free configuration keeps one browser origin while splitting the services:
   Add a lifecycle rule that deletes objects after one day as a backstop for the 24-hour expiry.
 - `SPATIUM_SESSION_SECRET` (at least 32 characters) signs session cookies. Render generates it.
   Changing it signs every browser out.
+- `SPATIUM_DAILY_SCENES` caps new walkthroughs per 24 hours across all visitors (50 in
+  `render.yaml`), which bounds storage writes. Stop reads are cached in memory and limited to
+  about two bucket reads per second, keeping usage far inside R2's free tier.
 
 Deploy the Render blueprint first, then update the rewrite destination in `vercel.json` if
 Render assigns a different hostname than `spatium-api.onrender.com`. A free Render service

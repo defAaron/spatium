@@ -9,6 +9,8 @@ services:
     envVars:
       - key: SPATIUM_SESSION_SECRET
         generateValue: true
+      - key: SPATIUM_DAILY_SCENES
+        value: "50"
       - key: SPATIUM_DATABASE_URL
         sync: false
       - key: SPATIUM_R2_ACCOUNT_ID

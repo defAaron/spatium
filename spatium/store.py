@@ -212,6 +212,10 @@ class Store:
     def save(self, scene):
         self.db.execute("UPDATE scenes SET metadata=? WHERE id=?", (json.dumps(asdict(scene)), scene.id))
 
+    def recent(self):
+        """Scenes created in the last 24 hours across every session."""
+        return self.db.execute("SELECT count(*) FROM scenes WHERE created>?", (self.clock()-86400,)).fetchone()[0]
+
     def limited(self, session):
         return self.db.execute("SELECT count(*) FROM scenes WHERE session=? AND created>?", (session, self.clock()-3600)).fetchone()[0] >= 6
 
